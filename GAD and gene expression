@@ -1,0 +1,415 @@
+# mount Google Drive
+
+from google.colab import drive
+drive.mount('/content/drive', force_remount=True)
+
+%cd /content/drive/MyDrive/
+
+import pandas as pd
+
+#Open New Cleaned Data
+updated_data = pd.read_csv('updated_data_cleaned_typed.csv')
+updated_data.head()
+
+#drop rows where status = NA
+updated_data = updated_data.dropna(subset=['status'])
+updated_data.head()
+
+#drop categorical variables
+drop_columns = ['sample_id', 'patient_id', 'sex', 'ethnicity', 'gad7', 'age', 'bmi']
+updated_data = updated_data.drop(columns=drop_columns)
+
+import pandas as pd
+import numpy as np
+from sklearn.model_selection import train_test_split
+from sklearn.feature_selection import RFE
+from sklearn.neural_network import MLPClassifier
+from sklearn.metrics import accuracy_score
+from sklearn.preprocessing import StandardScaler, OneHotEncoder
+from sklearn.compose import ColumnTransformer
+
+# Split the data
+train_data, test_data = train_test_split(updated_data, test_size=0.2, random_state=42)
+train_data, val_data = train_test_split(train_data, test_size=0.2, random_state=42)
+
+# Separate features and target variable
+X_train = train_data.drop(columns=['status'])
+y_train = train_data['status']
+X_val = val_data.drop(columns=['status'])
+y_val = val_data['status']
+X_test = test_data.drop(columns=['status'])
+y_test = test_data['status']
+
+# Normalize the numerical features
+scaler = StandardScaler()
+X_train_normalized = scaler.fit_transform(X_train)
+X_val_normalized = scaler.transform(X_val)
+X_test_normalized = scaler.transform(X_test)
+
+# Initialize the MLP model
+mlp_model = MLPClassifier(hidden_layer_sizes=(100, 50), max_iter=1000, random_state=42)
+
+# Train the MLP model
+mlp_model.fit(X_train_normalized, y_train)
+
+# Predict on the validation set
+y_val_pred = mlp_model.predict(X_val_normalized)
+
+# Evaluate the MLP model on the validation set
+accuracy = accuracy_score(y_val, y_val_pred)
+print(f"MLP Model Accuracy: {accuracy:.4f}")
+
+from sklearn.decomposition import PCA
+
+# Apply PCA to select relevant features
+pca = PCA(n_components=0.95, random_state=42)
+X_train_pca = pca.fit_transform(X_train_normalized)
+X_val_pca = pca.transform(X_val_normalized)
+X_test_pca = pca.transform(X_test_normalized)
+
+# Initialize the MLP model
+mlp_model_pca = MLPClassifier(hidden_layer_sizes=(100, 50), max_iter=1000, random_state=42)
+
+# Train the MLP model using PCA selected features
+mlp_model_pca.fit(X_train_pca, y_train)
+
+# Predict on the validation set
+y_val_pred_pca = mlp_model_pca.predict(X_val_pca)
+
+# Evaluate the MLP model with PCA on the validation set
+accuracy_pca = accuracy_score(y_val, y_val_pred_pca)
+print(f"MLP Model with PCA Accuracy: {accuracy_pca:.4f}")
+
+import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
+
+# Plot PCA graph
+def plot_pca(X_pca, y, title):
+    fig = plt.figure(figsize=(8, 6))
+    ax = fig.add_subplot(111, projection='3d')
+    ax.scatter(X_pca[:,0], X_pca[:,1], X_pca[:,2], c = ['red' if y == 'case' else 'blue' for y in y_train], cmap=plt.cm.Set1, edgecolor='k', s=40)
+    ax.set_title(title)
+    ax.set_xlabel("1st principal component")
+    ax.set_ylabel("2nd principal component")
+    ax.set_zlabel("3rd principal component")
+    plt.show()
+
+# Plot PCA graph for training data
+plot_pca(X_train_pca, y_train, "PCA Plot for Training Data")
+
+# Run stdev on new train data columns
+std_deviation = train_data.drop(columns=['status']).std()
+
+# Define the list of numbers of top standard deviation columns to consider
+num_top_columns = range(1, 50, 1)
+
+# Initialize a dictionary to store the performance of the MLP model for each case
+mlp_performance_results = {}
+
+# Loop over each number of top standard deviation columns
+for num_columns in num_top_columns:
+    # Select the top standard deviation columns
+    top_columns = std_deviation.nlargest(num_columns).index
+
+    # Select only the specified columns from the training data
+    train_data_selected = train_data[['status'] + top_columns.tolist()]
+    val_data_selected = val_data[['status'] + top_columns.tolist()]
+
+    # Train the MLP model using only the selected columns
+    X_train_selected = train_data_selected.drop(columns=['status'])
+    y_train_selected = train_data_selected['status']
+
+    # Initialize the MLP model with the desired architecture
+    mlp_model = MLPClassifier(hidden_layer_sizes=(100, 50), max_iter=1000, random_state=42)  # You can adjust the architecture as needed
+
+    # Train the MLP model
+    mlp_model.fit(X_train_selected, y_train_selected)
+
+    # Predict on the validation set using the same selected columns
+    X_val_selected = val_data_selected.drop(columns=['status'])  # Updated this line
+    y_val_pred_selected = mlp_model.predict(X_val_selected)
+
+    # Evaluate the MLP model on the validation set
+    accuracy_selected = accuracy_score(val_data_selected['status'], y_val_pred_selected)
+
+    # Store the performance results in the dictionary
+    mlp_performance_results[num_columns] = accuracy_selected
+
+# Print the performance results for MLP
+for num_columns, accuracy in mlp_performance_results.items():
+    print(f"MLP - Top {num_columns} Standard Deviation Columns - Accuracy: {accuracy:.4f}")
+
+from sklearn.ensemble import RandomForestClassifier
+
+# Train a Random Forest model to get feature importances
+rf_model = RandomForestClassifier(n_estimators=100, random_state=42)
+rf_model.fit(X_train_normalized, y_train)
+
+# Get feature importances
+feature_importances = rf_model.feature_importances_
+
+# Select top features based on importances
+num_top_features = 50  # adjust as needed
+top_feature_indices = feature_importances.argsort()[-num_top_features:][::-1]
+
+# Train MLP model using selected features
+mlp_model_selected_features = MLPClassifier(hidden_layer_sizes=(100, 50), max_iter=1000, random_state=42)
+mlp_model_selected_features.fit(X_train_normalized[:, top_feature_indices], y_train)
+
+# Predict on validation set
+y_val_pred_selected_features = mlp_model_selected_features.predict(X_val_normalized[:, top_feature_indices])
+
+# Evaluate MLP model with selected features
+accuracy_selected_features = accuracy_score(y_val, y_val_pred_selected_features)
+print(f"MLP Model with Selected Features Accuracy: {accuracy_selected_features:.4f}")
+
+from sklearn.ensemble import VotingClassifier
+from sklearn.linear_model import LogisticRegression
+from sklearn.svm import SVC
+from sklearn.ensemble import RandomForestClassifier
+
+# Initialize individual models
+log_reg = LogisticRegression()
+svc = SVC()
+rf = RandomForestClassifier(n_estimators=100, random_state=42)
+
+# Initialize Voting Classifier with models
+voting_clf = VotingClassifier(estimators=[('lr', log_reg), ('svc', svc), ('rf', rf)], voting='hard')
+
+# Train Voting Classifier
+voting_clf.fit(X_train_normalized, y_train)
+
+# Predict on the validation set
+y_val_pred_voting = voting_clf.predict(X_val_normalized)
+
+# Evaluate the Voting Classifier on the validation set
+accuracy_voting = accuracy_score(y_val, y_val_pred_voting)
+print(f"Voting Classifier Accuracy: {accuracy_voting:.4f}")
+
+from sklearn.ensemble import VotingClassifier
+from sklearn.linear_model import LogisticRegression
+from sklearn.svm import SVC
+from sklearn.ensemble import RandomForestClassifier
+
+# Select the top 40 standard deviation columns
+top_columns = std_deviation.nlargest(40).index
+
+# Get the column indices corresponding to the top 40 columns
+top_column_indices = [X_train.columns.get_loc(col) for col in top_columns]
+
+# Select only the specified columns from the training data
+X_train_selected = X_train_normalized[:, top_column_indices]
+X_val_selected = X_val_normalized[:, top_column_indices]
+
+# Initialize individual models
+log_reg = LogisticRegression()
+svc = SVC()
+rf = RandomForestClassifier(n_estimators=100, random_state=42)
+
+# Initialize Voting Classifier with models
+voting_clf = VotingClassifier(estimators=[('lr', log_reg), ('svc', svc), ('rf', rf)], voting='hard')
+
+# Train Voting Classifier
+voting_clf.fit(X_train_selected, y_train)
+
+# Predict on the validation set
+y_val_pred_voting = voting_clf.predict(X_val_selected)
+
+# Evaluate the Voting Classifier on the validation set
+accuracy_voting = accuracy_score(y_val, y_val_pred_voting)
+print(f"Voting Classifier Accuracy: {accuracy_voting:.4f}")
+
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import accuracy_score
+from sklearn.preprocessing import StandardScaler
+from sklearn.decomposition import PCA
+from sklearn.ensemble import RandomForestClassifier, VotingClassifier
+from sklearn.linear_model import LogisticRegression
+from sklearn.svm import SVC
+from sklearn.neural_network import MLPClassifier
+
+# Initialize the MLP model
+mlp_model = MLPClassifier(hidden_layer_sizes=(100, 50), max_iter=1000, random_state=42)
+
+# Train the MLP model
+mlp_model.fit(X_train_normalized, y_train)
+
+# Predict on the validation set
+y_val_pred = mlp_model.predict(X_val_normalized)
+
+# Evaluate the MLP model on the validation set
+accuracy = accuracy_score(y_val, y_val_pred)
+
+# Apply PCA to select relevant features
+pca = PCA(n_components=0.95, random_state=42)
+X_train_pca = pca.fit_transform(X_train_normalized)
+X_val_pca = pca.transform(X_val_normalized)
+X_test_pca = pca.transform(X_test_normalized)
+
+# Initialize the MLP model with PCA selected features
+mlp_model_pca = MLPClassifier(hidden_layer_sizes=(100, 50), max_iter=1000, random_state=42)
+
+# Train the MLP model using PCA selected features
+mlp_model_pca.fit(X_train_pca, y_train)
+
+# Predict on the validation set
+y_val_pred_pca = mlp_model_pca.predict(X_val_pca)
+
+# Evaluate the MLP model with PCA on the validation set
+accuracy_pca = accuracy_score(y_val, y_val_pred_pca)
+
+# Run stdev on new train data columns
+std_deviation = train_data.drop(columns=['status']).std()
+
+# Define the list of numbers of top standard deviation columns to consider
+num_top_columns = range(1, 50, 1)
+
+# Initialize a dictionary to store the performance of the MLP model for each case
+mlp_performance_results = {}
+
+# Loop over each number of top standard deviation columns
+for num_columns in num_top_columns:
+    # Select the top standard deviation columns
+    top_columns = std_deviation.nlargest(num_columns).index
+
+    # Select only the specified columns from the training data
+    train_data_selected = train_data[['status'] + top_columns.tolist()]
+    val_data_selected = val_data[['status'] + top_columns.tolist()]
+
+    # Train the MLP model using only the selected columns
+    X_train_selected = train_data_selected.drop(columns=['status'])
+    y_train_selected = train_data_selected['status']
+
+    # Initialize the MLP model with the desired architecture
+    mlp_model = MLPClassifier(hidden_layer_sizes=(100, 50), max_iter=1000, random_state=42)  # You can adjust the architecture as needed
+
+    # Train the MLP model
+    mlp_model.fit(X_train_selected, y_train_selected)
+
+    # Predict on the validation set using the same selected columns
+    X_val_selected = val_data_selected.drop(columns=['status'])  # Updated this line
+    y_val_pred_selected = mlp_model.predict(X_val_selected)
+
+    # Evaluate the MLP model on the validation set
+    accuracy_selected = accuracy_score(val_data_selected['status'], y_val_pred_selected)
+
+    # Store the performance results in the dictionary
+    mlp_performance_results[num_columns] = accuracy_selected
+
+# Train a Random Forest model to get feature importances
+rf_model = RandomForestClassifier(n_estimators=100, random_state=42)
+rf_model.fit(X_train_normalized, y_train)
+
+# Get feature importances
+feature_importances = rf_model.feature_importances_
+
+# Select top features based on importances
+num_top_features = 50  # adjust as needed
+top_feature_indices = feature_importances.argsort()[-num_top_features:][::-1]
+
+# Train MLP model using selected features
+mlp_model_selected_features = MLPClassifier(hidden_layer_sizes=(100, 50), max_iter=1000, random_state=42)
+mlp_model_selected_features.fit(X_train_normalized[:, top_feature_indices], y_train)
+
+# Predict on validation set
+y_val_pred_selected_features = mlp_model_selected_features.predict(X_val_normalized[:, top_feature_indices])
+
+# Evaluate MLP model with selected features
+accuracy_selected_features = accuracy_score(y_val, y_val_pred_selected_features)
+
+# Initialize individual models
+log_reg = LogisticRegression()
+svc = SVC()
+rf = RandomForestClassifier(n_estimators=100, random_state=42)
+
+# Train Voting Classifier
+voting_clf = VotingClassifier(estimators=[('lr', log_reg), ('svc', svc), ('rf', rf)], voting='hard')
+voting_clf.fit(X_train_normalized, y_train)
+
+# Predict on the validation set
+y_val_pred_voting = voting_clf.predict(X_val_normalized)
+
+# Evaluate the Voting Classifier on the validation set
+accuracy_voting = accuracy_score(y_val, y_val_pred_voting)
+
+# Select the top 40 standard deviation columns
+top_columns = std_deviation.nlargest(40).index
+
+# Get the column indices corresponding to the top 40 columns
+top_column_indices = [X_train.columns.get_loc(col) for col in top_columns]
+
+# Select only the specified columns from the training data
+X_train_selected = X_train_normalized[:, top_column_indices]
+X_val_selected = X_val_normalized[:, top_column_indices]
+
+# Initialize individual models
+log_reg = LogisticRegression()
+svc = SVC()
+rf = RandomForestClassifier(n_estimators=100, random_state=42)
+
+# Initialize Voting Classifier with models
+voting_clf = VotingClassifier(estimators=[('lr', log_reg), ('svc', svc), ('rf', rf)], voting='hard')
+
+# Train Voting Classifier
+voting_clf.fit(X_train_selected, y_train)
+
+# Predict on the validation set
+y_val_pred_voting = voting_clf.predict(X_val_selected)
+
+# Evaluate the Voting Classifier on the validation set
+accuracy_voting = accuracy_score(y_val, y_val_pred_voting)
+
+# Create DataFrame with results
+results_df = pd.DataFrame({
+    "Method": ["MLP", "MLP with PCA", "MLP with Stdev", "MLP with Feature Importance", "Voting"],
+    "Accuracy": [accuracy, accuracy_pca, max(mlp_performance_results.values()), accuracy_selected_features, accuracy_voting]
+})
+
+# Plot results
+plt.figure(figsize=(10, 6))
+plt.bar(results_df["Method"], results_df["Accuracy"], color=['blue', 'green', 'red', 'orange', 'purple'])
+plt.xlabel('Method')
+plt.ylabel('Accuracy')
+plt.title('Model Performance Comparison')
+plt.ylim(0, 1)
+plt.xticks(rotation=45)
+plt.show()
+
+# Display results
+print(results_df)
+
+# Create DataFrame with results
+results_df = pd.DataFrame({
+    "Algorithm": ["MLP", "MLP with PCA", "MLP with Stdev", "MLP with Feature Importance", "Voting"],
+    "Accuracy": [accuracy, accuracy_pca, max(mlp_performance_results.values()), accuracy_selected_features, accuracy_voting]
+})
+
+# Transpose DataFrame to have algorithms as rows and performance as columns
+results_df = results_df.set_index("Algorithm").T.reset_index(drop=True)
+
+# Display the table
+print(results_df)
+
+import umap
+from sklearn.cluster import KMeans
+import seaborn as sns
+
+# Apply UMAP for dimensionality reduction
+reducer = umap.UMAP(random_state=42)
+X_train_umap = reducer.fit_transform(X_train_normalized)
+
+# Cluster the reduced data
+kmeans = KMeans(n_clusters=2, random_state=42)
+kmeans.fit(X_train_umap)
+cluster_labels = kmeans.labels_
+
+# Plot the clusters
+plt.figure(figsize=(10, 6))
+sns.scatterplot(x=X_train_umap[:, 0], y=X_train_umap[:, 1], hue=cluster_labels, palette="Set1", legend='full')
+plt.title('UMAP Clustering')
+plt.xlabel('UMAP Component 1')
+plt.ylabel('UMAP Component 2')
+plt.show()
